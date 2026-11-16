@@ -18,6 +18,7 @@ import argparse
 import html
 import os
 import re
+import shutil
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -186,7 +187,7 @@ def build(notes_dir, out_dir, site_url, keep_images):
         f'<li><a href="notes/{n["slug"]}.html">{html.escape(n["title"])}</a> '
         f'<span class="meta">{n["date"]:%Y-%m-%d}</span></li>' for n in notes)
     index = (f"<h1>{html.escape(FEED_TITLE)}</h1>\n<p>{html.escape(FEED_DESCRIPTION)}</p>\n"
-             f'<p>RSS feed: <a href="feed.xml">{site_url}feed.xml</a></p>\n<ul>\n{items}\n</ul>')
+             f'<p>RSS feed: <a href="feed.xml">{site_url}feed.xml</a> · <a href="upload/">Upload notes</a></p>\n<ul>\n{items}\n</ul>')
     (out_dir / "index.html").write_text(page(FEED_TITLE, index, site_url, FEED_TITLE), encoding="utf-8")
 
     now = format_datetime(notes[0]["date"] if notes else datetime.now(timezone.utc))
@@ -219,6 +220,9 @@ def build(notes_dir, out_dir, site_url, keep_images):
 """
     (out_dir / "feed.xml").write_text(feed, encoding="utf-8")
     (out_dir / ".nojekyll").write_text("")
+    web_dir = Path(__file__).parent / "web"
+    if web_dir.is_dir():  # static extras such as the upload page
+        shutil.copytree(web_dir, out_dir, dirs_exist_ok=True)
     print(f"Built {len(notes)} notes ({min(len(notes), MAX_ITEMS)} in feed) -> {out_dir}/feed.xml")
 
 

@@ -6,6 +6,23 @@ My personal RSS feed, built from Markdown notes and hosted on GitHub Pages.
 
 ## Add a note
 
+### Upload page (easiest)
+
+Open `https://emindu.github.io/personalize-rss/upload/`, then:
+
+1. **Settings** (once): paste a [fine-grained GitHub token](https://github.com/settings/personal-access-tokens/new)
+   limited to this repo, with **Contents: Read and write** and **Actions: Read and write**.
+   The token is stored only in your browser.
+2. Drop `.md` files onto the page, or write a note in the built-in editor. Optionally pick a
+   folder, which becomes the category.
+3. Click **Publish**. Every queued file goes into one commit, which triggers the GitHub Action.
+   The page shows the Action's progress until the feed is deployed.
+
+The page can also delete notes and has a **Rebuild feed now** button, which runs the workflow manually.
+Anyone can open the page, but it can't do anything without your token.
+
+### Directly in GitHub
+
 Add a `.md` file under `notes/` and push to `main`. You can do this in the GitHub web
 UI or app with **Add file → Create new file**. GitHub Actions rebuilds the feed and
 deploys it in about a minute.

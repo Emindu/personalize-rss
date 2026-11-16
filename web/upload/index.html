@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Upload Notes</title>
+<style>
+:root{--bg:#fafaf8;--card:#fff;--text:#1a1a1a;--muted:#6b6b6b;--line:#e2e2dc;--accent:#2457c5;--ok:#1e7a3c;--err:#b3261e;--warn:#9a6700}
+@media (prefers-color-scheme:dark){:root{--bg:#141414;--card:#1e1e1e;--text:#ececec;--muted:#9a9a9a;--line:#333;--accent:#7aa2ff;--ok:#5cc47e;--err:#ff8a80;--warn:#e3b341}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 system-ui,-apple-system,Segoe UI,sans-serif}
+main{max-width:46rem;margin:0 auto;padding:24px 16px 64px}
+h1{font-size:1.5rem;margin:0 0 4px}
+h2{font-size:1.05rem;margin:0 0 12px}
+.sub{color:var(--muted);margin:0 0 24px}
+section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+label{display:block;font-size:.85rem;color:var(--muted);margin:10px 0 4px}
+input,textarea,select{width:100%;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--text);font:inherit}
+textarea{min-height:220px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.9rem}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media (max-width:560px){.row{grid-template-columns:1fr}}
+button{padding:8px 14px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);color:#fff;font:inherit;cursor:pointer}
+button.ghost{background:transparent;color:var(--accent)}
+button:disabled{opacity:.5;cursor:default}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+#drop{border:2px dashed var(--line);border-radius:10px;padding:28px 12px;text-align:center;color:var(--muted);cursor:pointer}
+#drop.over{border-color:var(--accent);color:var(--accent)}
+ul.files{list-style:none;padding:0;margin:12px 0 0}
+ul.files li{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);word-break:break-all}
+ul.files li:last-child{border-bottom:0}
+.x{background:none;border:0;color:var(--err);padding:2px 6px}
+.muted{color:var(--muted)} .ok{color:var(--ok)} .err{color:var(--err)} .warn{color:var(--warn)}
+#status{white-space:pre-wrap;font-size:.9rem;margin-top:10px}
+details summary{cursor:pointer;font-weight:600}
+a{color:var(--accent)}
+</style>
+</head>
+<body>
+<main>
+  <h1>Upload notes</h1>
+  <p class="sub">Each save makes one commit to the repo, and that commit starts the GitHub Action that rebuilds the RSS feed.</p>
+
+  <section id="settingsBox">
+    <details id="settings">
+      <summary>Settings</summary>
+      <div class="row">
+        <div><label for="owner">Owner</label><input id="owner"></div>
+        <div><label for="repo">Repository</label><input id="repo"></div>
+      </div>
+      <div class="row">
+        <div><label for="branch">Branch</label><input id="branch" value="main"></div>
+        <div><label for="token">GitHub token</label><input id="token" type="password" autocomplete="off" placeholder="github_pat_…"></div>
+      </div>
+      <p class="muted" style="font-size:.85rem">Create a <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">fine-grained token</a> limited to this repository, with <b>Contents: Read and write</b> and <b>Actions: Read and write</b>. It is stored only in this browser.</p>
+      <div class="actions">
+        <button id="saveSettings">Save settings</button>
+        <button id="forget" class="ghost">Forget token</button>
+      </div>
+    </details>
+  </section>
+
+  <section>
+    <h2>Upload Markdown files</h2>
+    <div id="drop" tabindex="0">Drop <code>.md</code> files here or click to choose</div>
+    <input id="picker" type="file" accept=".md,.markdown,text/markdown" multiple hidden>
+    <label for="folder">Folder inside <code>notes/</code> (optional, becomes the category)</label>
+    <input id="folder" list="folders" placeholder="e.g. finance">
+    <datalist id="folders"></datalist>
+    <ul class="files" id="queue"></ul>
+  </section>
+
+  <section>
+    <details id="writeBox">
+      <summary>Or write a note here</summary>
+      <div class="row">
+        <div><label for="title">Title</label><input id="title"></div>
+        <div><label for="tags">Tags (comma separated)</label><input id="tags" placeholder="finance, ideas"></div>
+      </div>
+      <label for="body">Markdown</label>
+      <textarea id="body" placeholder="Write your note…"></textarea>
+      <div class="actions"><button id="addWritten" class="ghost">Add to upload list</button></div>
+    </details>
+  </section>
+
+  <section>
+    <div class="actions" style="margin-top:0">
+      <button id="publish" disabled>Publish</button>
+      <button id="rebuild" class="ghost">Rebuild feed now</button>
+      <a id="feedLink" href="../feed.xml" style="align-self:center;margin-left:auto">View feed</a>
+    </div>
+    <div id="status" class="muted"></div>
+  </section>
+
+  <section>
+    <h2>Published notes</h2>
+    <ul class="files" id="existing"><li class="muted">Loading…</li></ul>
+  </section>
+</main>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const store = {
+    get(k, d = "") { try { return localStorage.getItem("rss." + k) ?? d; } catch { return d; } },
+    set(k, v) { try { localStorage.setItem("rss." + k, v); } catch {} },
+    del(k) { try { localStorage.removeItem("rss." + k); } catch {} },
+  };
+
+  // Default owner/repo from the Pages URL: https://<owner>.github.io/<repo>/upload/
+  const host = location.hostname.endsWith(".github.io") ? location.hostname.split(".")[0] : "";
+  const seg = location.pathname.split("/").filter(Boolean)[0] || "";
+  $("owner").value = store.get("owner", host);
+  $("repo").value = store.get("repo", seg !== "upload" ? seg : "");
+  $("branch").value = store.get("branch", "main");
+  $("token").value = store.get("token");
+  if (!$("token").value || !$("owner").value || !$("repo").value) $("settings").open = true;
+
+  const cfg = () => ({ owner: $("owner").value.trim(), repo: $("repo").value.trim(),
+                       branch: $("branch").value.trim() || "main", token: $("token").value.trim() });
+
+  $("saveSettings").onclick = () => {
+    const c = cfg();
+    store.set("owner", c.owner); store.set("repo", c.repo); store.set("branch", c.branch); store.set("token", c.token);
+    $("settings").open = false; status("Settings saved.", "ok"); loadExisting();
+  };
+  $("forget").onclick = () => { store.del("token"); $("token").value = ""; status("Token removed from this browser.", "ok"); };
+
+  async function gh(path, opts = {}) {
+    const c = cfg();
+    const headers = { Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" };
+    if (c.token) headers.Authorization = "Bearer " + c.token;
+    if (opts.body) headers["Content-Type"] = "application/json";
+    const res = await fetch(`https://api.github.com/repos/${c.owner}/${c.repo}${path}`,
+      { ...opts, headers, body: opts.body ? JSON.stringify(opts.body) : undefined });
+    if (!res.ok) {
+      let msg = res.status + " " + res.statusText;
+      try { msg += ": " + (await res.json()).message; } catch {}
+      if (res.status === 401) msg += " (check the token)";
+      if (res.status === 403 || res.status === 404) msg += " (token may lack access to this repo, or the permission is missing)";
+      throw new Error(msg);
+    }
+    return res.status === 204 ? null : res.json();
+  }
+
+  function status(msg, cls = "muted") { $("status").className = cls; $("status").textContent = msg; }
+
+  const slugify = s => s.toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "")
+    .replace(/[^\w\s-]/g, "").trim().replace(/[\s_-]+/g, "-") || "note";
+  const cleanFolder = f => f.split("/").map(p => slugify(p)).filter(Boolean).join("/");
+
+  // ---- upload queue ----
+  const queue = []; // {name, content}
+  function renderQueue() {
+    $("queue").innerHTML = "";
+    queue.forEach((f, i) => {
+      const li = document.createElement("li");
+      li.innerHTML = `<span></span><button class="x" title="Remove">✕</button>`;
+      li.firstChild.textContent = f.name + "  ·  " + f.content.length.toLocaleString() + " chars";
+      li.lastChild.onclick = () => { queue.splice(i, 1); renderQueue(); };
+      $("queue").appendChild(li);
+    });
+    $("publish").disabled = queue.length === 0;
+  }
+  async function addFiles(files) {
+    for (const file of files) {
+      if (!/\.(md|markdown)$/i.test(file.name)) { status(`Skipped ${file.name}: not a Markdown file.`, "warn"); continue; }
+      const base = file.name.replace(/\.(md|markdown)$/i, "");
+      queue.push({ name: slugify(base) + ".md", content: await file.text() });
+    }
+    renderQueue();
+  }
+  const drop = $("drop");
+  drop.onclick = () => $("picker").click();
+  drop.onkeydown = e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); $("picker").click(); } };
+  $("picker").onchange = e => { addFiles(e.target.files); e.target.value = ""; };
+  ["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", e => addFiles(e.dataTransfer.files));
+
+  $("addWritten").onclick = () => {
+    const title = $("title").value.trim(), body = $("body").value.trim();
+    if (!title || !body) { status("A written note needs a title and some text.", "warn"); return; }
+    const tags = $("tags").value.split(",").map(t => t.trim()).filter(Boolean);
+    const now = new Date().toISOString().slice(0, 16).replace("T", " ");
+    const fm = ["---", `title: ${title.replace(/\n/g, " ")}`, `date: ${now}`];
+    if (tags.length) fm.push(`tags: [${tags.join(", ")}]`);
+    fm.push("---", "", body, "");
+    queue.push({ name: slugify(title) + ".md", content: fm.join("\n") });
+    $("title").value = $("tags").value = $("body").value = "";
+    renderQueue(); status("Added. Click Publish to upload.", "ok");
+  };
+
+  // ---- publish: all files in ONE commit via the Git Data API ----
+  let known = new Set();
+  $("publish").onclick = async () => {
+    const c = cfg();
+    if (!c.token) { $("settings").open = true; status("Add a GitHub token in Settings first.", "warn"); return; }
+    const folder = cleanFolder($("folder").value);
+    const paths = queue.map(f => `notes/${folder ? folder + "/" : ""}${f.name}`);
+    const overwrites = paths.filter(p => known.has(p));
+    if (overwrites.length && !confirm("These notes already exist and will be replaced:\n\n" + overwrites.join("\n"))) return;
+
+    $("publish").disabled = true;
+    try {
+      status("Uploading…");
+      const ref = await gh(`/git/ref/heads/${c.branch}`);
+      const head = await gh(`/git/commits/${ref.object.sha}`);
+      const tree = await gh(`/git/trees`, { method: "POST", body: {
+        base_tree: head.tree.sha,
+        tree: queue.map((f, i) => ({ path: paths[i], mode: "100644", type: "blob", content: f.content })),
+      }});
+      const msg = queue.length === 1 ? `Add note: ${paths[0]}` : `Add ${queue.length} notes`;
+      const commit = await gh(`/git/commits`, { method: "POST", body: { message: msg, tree: tree.sha, parents: [head.sha] } });
+      await gh(`/git/refs/heads/${c.branch}`, { method: "PATCH", body: { sha: commit.sha } });
+      queue.length = 0; renderQueue();
+      status(`Committed ${commit.sha.slice(0, 7)}. Waiting for the GitHub Action…`, "ok");
+      loadExisting();
+      watchRun(commit.sha);
+    } catch (e) {
+      status("Upload failed: " + e.message, "err");
+      $("publish").disabled = queue.length === 0;
+    }
+  };
+
+  // ---- manual trigger (workflow_dispatch) ----
+  $("rebuild").onclick = async () => {
+    const c = cfg();
+    if (!c.token) { $("settings").open = true; status("Add a GitHub token in Settings first.", "warn"); return; }
+    try {
+      const since = new Date().toISOString();
+      await gh(`/actions/workflows/pages.yml/dispatches`, { method: "POST", body: { ref: c.branch } });
+      status("Rebuild requested. Waiting for the GitHub Action…", "ok");
+      watchRun(null, since);
+    } catch (e) { status("Could not start the workflow: " + e.message, "err"); }
+  };
+
+  // ---- follow the workflow run ----
+  let watching = 0;
+  async function watchRun(sha, since) {
+    const id = ++watching, c = cfg(), started = Date.now();
+    while (id === watching && Date.now() - started < 10 * 60 * 1000) {
+      await new Promise(r => setTimeout(r, 5000));
+      try {
+        const q = sha ? `head_sha=${sha}` : `event=workflow_dispatch&created=>=${since}`;
+        const { workflow_runs: runs } = await gh(`/actions/workflows/pages.yml/runs?branch=${c.branch}&per_page=1&${q}`);
+        const run = runs && runs[0];
+        if (!run) { status("Committed. Waiting for the Action to start…", "muted"); continue; }
+        const link = run.html_url;
+        if (run.status !== "completed") { status(`Action ${run.status.replace("_", " ")}…  ${link}`, "muted"); continue; }
+        if (run.conclusion === "success") status(`Feed rebuilt and deployed ✓  (it can take a minute for Pages to refresh)\n${link}`, "ok");
+        else status(`Action finished: ${run.conclusion}. See ${link}`, "err");
+        return;
+      } catch (e) { status("Could not check the Action: " + e.message, "warn"); return; }
+    }
+  }
+
+  // ---- list / delete existing notes ----
+  async function loadExisting() {
+    const c = cfg(), list = $("existing");
+    if (!c.owner || !c.repo) { list.innerHTML = '<li class="muted">Set owner and repository in Settings.</li>'; return; }
+    try {
+      const t = await gh(`/git/trees/${c.branch}?recursive=1`);
+      const notes = t.tree.filter(e => e.type === "blob" && /^notes\/.+\.md$/i.test(e.path)).map(e => e.path).sort();
+      known = new Set(notes);
+      const folders = new Set(notes.map(p => p.split("/").slice(1, -1).join("/")).filter(Boolean));
+      $("folders").innerHTML = [...folders].map(f => `<option value="${f}">`).join("");
+      list.innerHTML = notes.length ? "" : '<li class="muted">No notes yet.</li>';
+      for (const p of notes) {
+        const li = document.createElement("li");
+        li.innerHTML = `<a target="_blank" rel="noopener"></a><button class="x" title="Delete">✕</button>`;
+        li.firstChild.textContent = p.slice(6);
+        li.firstChild.href = `https://github.com/${c.owner}/${c.repo}/blob/${c.branch}/${p}`;
+        li.lastChild.onclick = () => removeNote(p);
+        list.appendChild(li);
+      }
+    } catch (e) { list.innerHTML = ""; const li = document.createElement("li"); li.className = "err"; li.textContent = e.message; list.appendChild(li); }
+  }
+  async function removeNote(path) {
+    const c = cfg();
+    if (!c.token) { $("settings").open = true; status("Add a GitHub token in Settings first.", "warn"); return; }
+    if (!confirm(`Delete ${path}? It will disappear from the feed.`)) return;
+    try {
+      const file = await gh(`/contents/${path}?ref=${c.branch}`);
+      const r = await gh(`/contents/${path}`, { method: "DELETE", body: { message: `Delete note: ${path}`, sha: file.sha, branch: c.branch } });
+      status("Deleted. Waiting for the GitHub Action…", "ok");
+      loadExisting(); watchRun(r.commit.sha);
+    } catch (e) { status("Delete failed: " + e.message, "err"); }
+  }
+
+  renderQueue();
+  loadExisting();
+})();
+</script>
+</body>
+</html>
