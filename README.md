@@ -55,11 +55,30 @@ file** after publishing, or readers will show it as a new unread item.
 ## Feed details
 
 - RSS 2.0 with the full note as HTML in `<content:encoded>`, newest first, latest 50 notes.
-- Images are stripped (alt text kept) to keep it light for e-readers. Run with
-  `--keep-images` to keep them.
+- Images stay in the article (see **Images** below). Iframes, audio players and scripts are removed,
+  because readers can't run them.
+- Notes saved with the Obsidian Web Clipper work as they are: `author`, `published`, `source`
+  and `description` become a byline under the title, a link to the original, and the preview text.
 - Each note also gets an HTML page, plus an index page at the site root.
 - Title and description can be changed with the `FEED_TITLE` and `FEED_DESCRIPTION`
   environment variables in `.github/workflows/pages.yml`.
+
+## Images
+
+Images in a note show up when you open the article in your reader, as long as the device is online.
+- **Online images** (`![](https://…)`, as the Web Clipper saves them) stay as links to the original
+  site. Substack and X/Twitter images are requested as JPEG at 800px wide, because many e-readers
+  can't show WebP and large images use a lot of memory. Set the width with `FEED_IMAGE_WIDTH`.
+- **Your own images:** put the file next to the note, for example `notes/ai/chart.png`, and reference it
+  as `![](chart.png)`. It is published at `…/files/ai/chart.png` and the link is rewritten for you.
+- **No images at all:** set `FEED_IMAGES: strip` in the workflow's build step `env`.
+
+**KOReader news downloader:** the feed already contains the full article, so don't make it fetch the page.
+Do turn images on, in `news/feed_config.lua`:
+
+```lua
+{ "https://emindu.github.io/personalize-rss/feed.xml", limit = 20, download_full_article = false, include_images = true },
+```
 
 ## One-time setup
 
