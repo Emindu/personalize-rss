@@ -30,6 +30,13 @@ ul.files{list-style:none;padding:0;margin:12px 0 0}
 ul.files li{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:6px 0;border-bottom:1px solid var(--line);word-break:break-all}
 ul.files li:last-child{border-bottom:0}
 .x{background:none;border:0;color:var(--err);padding:2px 6px}
+.listbar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding-bottom:8px;border-bottom:1px solid var(--line)}
+.listbar label{display:flex;gap:6px;align-items:center;margin:0;color:var(--text);font-size:.95rem}
+.listbar input[type=search]{flex:1;min-width:10rem;width:auto}
+.listbar .danger{margin-left:auto}
+button.danger{background:var(--err);border-color:var(--err)}
+ul.files li label.pick{display:flex;gap:8px;align-items:flex-start;margin:0;color:var(--text);font-size:inherit;flex:1;min-width:0}
+input[type=checkbox]{width:auto;margin-top:4px;accent-color:var(--accent)}
 .muted{color:var(--muted)} .ok{color:var(--ok)} .err{color:var(--err)} .warn{color:var(--warn)}
 #status{white-space:pre-wrap;font-size:.9rem;margin-top:10px}
 details summary{cursor:pointer;font-weight:600}
@@ -94,7 +101,13 @@ a{color:var(--accent)}
 
   <section>
     <h2>Published notes</h2>
+    <div class="listbar">
+      <label><input type="checkbox" id="selectAll"> Select all</label>
+      <input type="search" id="filter" placeholder="Filter…" aria-label="Filter notes">
+      <button id="deleteSelected" class="danger" disabled>Delete selected</button>
+    </div>
     <ul class="files" id="existing"><li class="muted">Loading…</li></ul>
+    <div id="listStatus" class="muted" style="font-size:.9rem;white-space:pre-wrap"></div>
   </section>
 </main>
 
@@ -143,7 +156,10 @@ a{color:var(--accent)}
     return res.status === 204 ? null : res.json();
   }
 
-  function status(msg, cls = "muted") { $("status").className = cls; $("status").textContent = msg; }
+  let statusTarget = "status";
+  function status(msg, cls = "muted") {
+    for (const id of new Set(["status", statusTarget])) { $(id).className = cls; $(id).textContent = msg; }
+  }
 
   const slugify = s => s.toLowerCase().normalize("NFKD").replace(/[̀-ͯ]/g, "")
     .replace(/[^\w\s-]/g, "").trim().replace(/[\s_-]+/g, "-") || "note";
@@ -191,6 +207,17 @@ a{color:var(--accent)}
     renderQueue(); status("Added. Click Publish to upload.", "ok");
   };
 
+  // One commit for many changes (adds and deletes) via the Git Data API -> one workflow run.
+  async function commitTree(entries, message) {
+    const c = cfg();
+    const ref = await gh(`/git/ref/heads/${c.branch}`);
+    const head = await gh(`/git/commits/${ref.object.sha}`);
+    const tree = await gh(`/git/trees`, { method: "POST", body: { base_tree: head.tree.sha, tree: entries } });
+    const commit = await gh(`/git/commits`, { method: "POST", body: { message, tree: tree.sha, parents: [head.sha] } });
+    await gh(`/git/refs/heads/${c.branch}`, { method: "PATCH", body: { sha: commit.sha } });
+    return commit;
+  }
+
   // ---- publish: all files in ONE commit via the Git Data API ----
   let known = new Set();
   $("publish").onclick = async () => {
@@ -203,16 +230,10 @@ a{color:var(--accent)}
 
     $("publish").disabled = true;
     try {
+      statusTarget = "status";
       status("Uploading…");
-      const ref = await gh(`/git/ref/heads/${c.branch}`);
-      const head = await gh(`/git/commits/${ref.object.sha}`);
-      const tree = await gh(`/git/trees`, { method: "POST", body: {
-        base_tree: head.tree.sha,
-        tree: queue.map((f, i) => ({ path: paths[i], mode: "100644", type: "blob", content: f.content })),
-      }});
       const msg = queue.length === 1 ? `Add note: ${paths[0]}` : `Add ${queue.length} notes`;
-      const commit = await gh(`/git/commits`, { method: "POST", body: { message: msg, tree: tree.sha, parents: [head.sha] } });
-      await gh(`/git/refs/heads/${c.branch}`, { method: "PATCH", body: { sha: commit.sha } });
+      const commit = await commitTree(queue.map((f, i) => ({ path: paths[i], mode: "100644", type: "blob", content: f.content })), msg);
       queue.length = 0; renderQueue();
       status(`Committed ${commit.sha.slice(0, 7)}. Waiting for the GitHub Action…`, "ok");
       loadExisting();
@@ -226,6 +247,7 @@ a{color:var(--accent)}
   // ---- manual trigger (workflow_dispatch) ----
   $("rebuild").onclick = async () => {
     const c = cfg();
+    statusTarget = "status";
     if (!c.token) { $("settings").open = true; status("Add a GitHub token in Settings first.", "warn"); return; }
     try {
       const since = new Date().toISOString();
@@ -265,27 +287,65 @@ a{color:var(--accent)}
       known = new Set(notes);
       const folders = new Set(notes.map(p => p.split("/").slice(1, -1).join("/")).filter(Boolean));
       $("folders").innerHTML = [...folders].map(f => `<option value="${f}">`).join("");
-      list.innerHTML = notes.length ? "" : '<li class="muted">No notes yet.</li>';
-      for (const p of notes) {
-        const li = document.createElement("li");
-        li.innerHTML = `<a target="_blank" rel="noopener"></a><button class="x" title="Delete">✕</button>`;
-        li.firstChild.textContent = p.slice(6);
-        li.firstChild.href = `https://github.com/${c.owner}/${c.repo}/blob/${c.branch}/${p}`;
-        li.lastChild.onclick = () => removeNote(p);
-        list.appendChild(li);
-      }
+      allNotes = notes;
+      selected.forEach(p => { if (!known.has(p)) selected.delete(p); });
+      renderExisting();
     } catch (e) { list.innerHTML = ""; const li = document.createElement("li"); li.className = "err"; li.textContent = e.message; list.appendChild(li); }
   }
-  async function removeNote(path) {
+
+  let allNotes = [];
+  const selected = new Set();
+  const visibleNotes = () => {
+    const q = $("filter").value.trim().toLowerCase();
+    return q ? allNotes.filter(p => p.toLowerCase().includes(q)) : allNotes;
+  };
+  function renderExisting() {
+    const c = cfg(), list = $("existing"), shown = visibleNotes();
+    list.innerHTML = shown.length ? "" : `<li class="muted">${allNotes.length ? "No notes match." : "No notes yet."}</li>`;
+    for (const p of shown) {
+      const li = document.createElement("li");
+      li.innerHTML = `<label class="pick"><input type="checkbox"><a target="_blank" rel="noopener"></a></label><button class="x" title="Delete">✕</button>`;
+      const box = li.querySelector("input"), a = li.querySelector("a");
+      box.checked = selected.has(p);
+      box.onchange = () => { box.checked ? selected.add(p) : selected.delete(p); updateSelection(); };
+      a.textContent = p.slice(6);
+      a.href = `https://github.com/${c.owner}/${c.repo}/blob/${c.branch}/${p}`;
+      li.querySelector(".x").onclick = () => removeNotes([p]);
+      list.appendChild(li);
+    }
+    updateSelection();
+  }
+  function updateSelection() {
+    const shown = visibleNotes(), picked = shown.filter(p => selected.has(p)).length;
+    $("selectAll").checked = shown.length > 0 && picked === shown.length;
+    $("selectAll").indeterminate = picked > 0 && picked < shown.length;
+    $("deleteSelected").disabled = selected.size === 0;
+    $("deleteSelected").textContent = selected.size ? `Delete selected (${selected.size})` : "Delete selected";
+  }
+  $("selectAll").onchange = e => {
+    visibleNotes().forEach(p => e.target.checked ? selected.add(p) : selected.delete(p));
+    renderExisting();
+  };
+  $("filter").oninput = renderExisting;
+  $("deleteSelected").onclick = () => removeNotes([...selected].sort());
+
+  async function removeNotes(paths) {
     const c = cfg();
+    statusTarget = "listStatus";
     if (!c.token) { $("settings").open = true; status("Add a GitHub token in Settings first.", "warn"); return; }
-    if (!confirm(`Delete ${path}? It will disappear from the feed.`)) return;
+    const names = paths.map(p => p.slice(6));
+    const preview = names.length > 15 ? names.slice(0, 15).join("\n") + `\n…and ${names.length - 15} more` : names.join("\n");
+    if (!confirm(`Delete ${paths.length} note${paths.length > 1 ? "s" : ""}? They will disappear from the feed.\n\n${preview}`)) return;
+    $("deleteSelected").disabled = true;
     try {
-      const file = await gh(`/contents/${path}?ref=${c.branch}`);
-      const r = await gh(`/contents/${path}`, { method: "DELETE", body: { message: `Delete note: ${path}`, sha: file.sha, branch: c.branch } });
-      status("Deleted. Waiting for the GitHub Action…", "ok");
-      loadExisting(); watchRun(r.commit.sha);
-    } catch (e) { status("Delete failed: " + e.message, "err"); }
+      status(`Deleting ${paths.length} note${paths.length > 1 ? "s" : ""}…`);
+      const msg = paths.length === 1 ? `Delete note: ${paths[0]}` : `Delete ${paths.length} notes`;
+      // sha: null removes the file from the tree
+      const commit = await commitTree(paths.map(path => ({ path, mode: "100644", type: "blob", sha: null })), msg);
+      paths.forEach(p => selected.delete(p));
+      status(`Deleted in commit ${commit.sha.slice(0, 7)}. Waiting for the GitHub Action…`, "ok");
+      loadExisting(); watchRun(commit.sha);
+    } catch (e) { status("Delete failed: " + e.message, "err"); updateSelection(); }
   }
 
   renderQueue();
