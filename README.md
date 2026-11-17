@@ -18,7 +18,9 @@ Open `https://emindu.github.io/personalize-rss/upload/`, then:
 3. Click **Publish**. Every queued file goes into one commit, which triggers the GitHub Action.
    The page shows the Action's progress until the feed is deployed.
 
-The page can also delete notes and has a **Rebuild feed now** button, which runs the workflow manually.
+The page can also delete notes: tick several (or **Select all**, optionally after filtering) and click
+**Delete selected**. They are removed in one commit, so the feed rebuilds once. **Rebuild feed now**
+runs the workflow manually.
 Anyone can open the page, but it can't do anything without your token.
 
 ### Directly in GitHub
